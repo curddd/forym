@@ -1,0 +1,174 @@
+#!/usr/bin/perl
+
+=thinking
+
+/_topic_name
+/_reply/_topic_name
+/_new_topic
+/ (index)
+
+
+=cut
+
+
+use IO::Socket;
+
+my $server = IO::Socket::INET->new(
+        LocalAddr => "127.0.0.1",
+        LocalPort => 7858,
+        Listen    => SOMAXCONN,
+        Proto     => 'tcp',
+        ReuseAddr => 1,
+) or die "Can't create server on port $port: $!\n";
+
+print "Server is listening on http://localhost:$port\n";
+
+
+sub puke {
+	($c,$content) = (@_);
+	while(<$content>){
+		print $c $_;
+	}
+}
+
+sub index {
+
+	($CLIENT) = @_; 
+	$topics = `ls topics -1`;
+	@topics = split('\n',$topics);
+	@links = ();
+	foreach (@topics){
+		$t  = "<a href='/topic/$_'>$_</a><br>";
+		push(@links,$t);
+	}
+	$site = join('',@links);
+	$site = "<h1>forym</h1>".$site.'<br><br>
+
+<form action="+topic" method="POST" enctype="text/plain">
+<input type="text" name="topic" width="80" placeholder="topic"/><BR>
+<textarea rows="14" cols="80" name="DATA"></textarea><br>
+<button type="SUBMIT">submit topic</button>
+</form>
+';
+
+
+print $CLIENT $site;
+
+}
+
+sub topic {
+	($client, $topic) = @_;
+	open $fh, "<", "/topic/$topic";
+	&puke($client, $fh);
+	close $fh;
+}
+
+sub new_topic {	
+	($c, $b) = (@_);
+print "NEW TOPIC SHIT $c $b ";
+#make topic .. file in /topics
+#sae body in file
+#underline the header?? dunno
+#
+#
+#
+	$b =~ s/^DATA=//g;
+	@b = split('\n',$b);
+	$title = shift(@b);
+	$title =~ s/ /_/g;
+
+	$topic = time()."_$title";
+	open $t, ">", "topics/$topic";
+
+	print $t shift(@b)."<br>";
+	print $t "####################################<br>n";
+	while(scalar @b){
+		print $t shift(@b)."<br>";
+	}
+	print $t "####################################<br><br>";
+
+	seek $t, 0, 0;
+
+	print $c "HTTP/1.1 303 See Other\n";
+	print $c "Location: /topics/$topic\r\n\r\n";
+
+	puke($c, $b);
+
+	close $t;	
+}
+
+sub reply {
+($c, $t, $b) = (@_);
+open $t, ">", "topics/$t";
+@b = split($b, '\n');
+print $t shift(@b);
+print $t "####################################\n";
+while(scalar @b){
+	peinr $t shift(@b);
+}
+print $t "####################################\n\n";
+
+seek $t, 0, 0;
+
+puke($c,$b);
+close $t;
+
+}
+
+
+sub read_body{
+	($client,$req) = (@_);
+	($cl) = $req =~ /Content-Length: (\d+)/;
+	$read = 0;
+	$res =  "";
+	while($read<$cl){
+	  $br = read($client,$chunk,$cl-br);
+	  last unless $br;
+	  $res .= $chunk;
+	  $read += $br;
+	}
+	$res =~ s/\<|\>//g;
+	$res;
+}
+
+while (my $client = $server->accept()) {
+	my $req = "";
+	while (<$client>) {
+	    $req .= $_;
+	    last if $_ eq "\r\n"; 
+	}
+	@req = split('\n', $req);
+	($method, $path) =  split(' ',$req[0]);
+	$body = &read_body($client,$req);
+
+
+	if($path eq "" || $path eq "/"){
+		print $client 'HTTP/1.1 200 OK\r\n\r\n';
+		&index($client);
+		goto end;
+	}
+
+	if($path =~ /^topic\/(.*)/){
+		&topic($client, $path);
+	}
+
+	if($path =~ /^\+topic/){
+		&new_topic($client,$body);
+		goto end;
+	}
+
+	if($path =~ m/_reply$/){
+		$topic = substr $path, -6;
+		&reply($client, $topic, $body);
+	}
+
+	
+        print $client "HTTP/1.1 404 Not Found\r\n\r\n";
+
+	end:
+	$client->close();
+        seek $index,0,0;
+}
+$server->close();
+
+

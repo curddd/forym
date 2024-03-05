@@ -1,0 +1,298 @@
+#!/usr/bin/perl
+
+=aufbau
+
++topic
++reply
+?topic_nr_name
+
+=cut
+
+my $LISTENADDR = "0.0.0.0";
+my $PORT = 80;
+
+
+my $mod_time = 0;
+my $TIME_MOD = 1000;
+
+use IO::Socket;
+
+my $server = IO::Socket::INET->new(
+        LocalAddr => $LISTENADDR,
+        LocalPort => $PORT,
+        Listen    => SOMAXCONN,
+        Proto     => 'tcp',
+        ReuseAddr => 1,
+) or die "Can't create server on port $port: $!\n";
+
+print "Server is listening on http://localhost:$port\n";
+
+
+my $SUBMIT_NEW_TOPIC = '
+    <h3>new topic</h3>
+    <form action="/+topic" method="POST" enctype="text/plain">
+        <textarea rows="14" cols="80" name="topic"></textarea><br>
+        <button type="submit">submit new topic</button>
+    </form>
+';
+
+my $SUBMIT_NEW_REPLY = '
+    <h3>new reply</h3>
+    <form action="+reply+TOPIC" method="POST" enctype="text/plain">
+        <textarea rows="14" cols="80" name="reply"></textarea><br>
+        <button type="submit">submit new reply</button>
+    </form>
+';
+
+
+
+sub generic_response{
+    (my $client, my $text) = (@_);
+    print $client "HTTP/1.1 200 OK\r\n\r\n";
+    print $client $text;
+    goto end;
+
+}
+
+
+sub get_mod_timestamp{
+    $mod_time = ($mod_time+1) % $TIME_MOD;
+    return sprintf("%d%03d",time(),$mod_time);
+}
+
+sub index{
+    (my $client) = (@_);
+
+    print "$client index\n";
+
+    my @topics = split('\n',`ls -1r topics`);
+
+    my @links = ();
+    foreach(@topics){
+        my @t = split('_', $_);
+        shift(@t);
+        my $t = join(' ', @t);
+        print "topic $t\n";
+
+        push(@links,"<a href='?$_'>$t</a><br>");
+    }
+
+    print $client "HTTP/1.1 200 OK\r\n\r\n";
+    
+    my $index = "
+    <h1>forym</h1>
+    ". join("",@links)."
+    <hr>
+    $SUBMIT_NEW_TOPIC
+    "
+    ;
+
+    print $client $index;
+}
+
+
+sub new_topic{
+    (my $client, my $body) = (@_);
+
+    $body =~ s/^topic=//g;
+
+    my @body = split('\n', $body);
+
+    my $topic = shift(@body);
+    my $topic_body = join('\n',@body);
+
+    if(length($topic)==0){
+        &generic_response($client, "no title");
+    }
+
+    if(length($topic_body)==0){
+        &generic_response($client, "please provide topic body");
+    }
+
+
+    my $folder_name = $topic;
+    $folder_name =~ s/\_//g;
+    $folder_name =~ s/;//g;
+    $folder_name = &get_mod_timestamp() . "_$folder_name";
+    $folder_name =~ s/ /_/g;
+
+    $folder_name = quotemeta($folder_name);
+    $folder_name =~ s/\\.//g;
+
+    `mkdir topics/$folder_name`; 
+
+    if($mkdir_res =~ /Illegal byte sequence/){
+        &generic_response($client, "illegal topic characters");
+    }
+
+    open my $w_out, ">", "topics/$folder_name/".&get_mod_timestamp();
+    print $w_out $body;
+    close $w_out;
+
+
+	print $client "HTTP/1.1 303 See Other\n";
+	print $client "Location: /?$folder_name\r\n\r\n";
+
+}
+
+sub view_topic{
+    (my $client, my $folder_name) = (@_);
+
+    $folder_name = quotemeta($folder_name);
+
+    printf("view_topic, folder name, $folder_name\n");
+
+
+    if(! -e "topics/$folder_name"){
+        &generic_response($client, "this topic does not exist");
+    }
+
+
+
+    print $client "HTTP/1.1 200 OK\r\n\r\n";
+
+    my @replies = `ls -1 topics/$folder_name`;
+
+    my $op = shift(@replies);
+    $op =~ s/\n//g;
+
+
+    open my $in, "<", "topics/$folder_name/$op";
+
+    my $first = 1;
+    while(<$in>){
+        
+        if($first){
+            $_ =~ s/\n//g;
+            print $client "<h1>$_</h1>";
+            $first = 0;
+            next;
+        }
+        $_ =~ s/\n/\<br\>/g;
+        print $client $_;
+
+        print $_;
+    }
+    close $in;
+
+
+    foreach my $reply (@replies){
+        $reply =~ s/\n//g;
+
+        open my $in, "<", "topics/$folder_name/$reply";
+
+        print $client "<hr>";
+        while(<$in>){
+            $_ =~ s/\n/\<br\>/g;
+            print $client $_;
+        }
+        close $in;
+    }   
+
+    print $client "<hr>";
+    my $reply_part = $SUBMIT_NEW_REPLY;
+    $reply_part =~ s/TOPIC/$folder_name/;
+    print $client $reply_part;
+
+
+
+
+}
+
+sub new_reply{
+    (my $client, $folder_name, my $body) = (@_);
+
+    $folder_name = quotemeta($folder_name);
+    if(! -e "topics/$folder_name"){
+        &generic_response($client, "this topic does not exist");
+    }
+
+    $body =~ s/^reply=//g;
+    if(length($body)==1){
+        &generic_response($client, "empty reply");
+    }
+
+
+    open my $w_out, ">", "topics/$folder_name/".&get_mod_timestamp();
+    print $w_out $body;
+    close $w_out;
+
+
+	print $client "HTTP/1.1 303 See Other\n";
+	print $client "Location: /?$folder_name\r\n\r\n";
+
+}
+
+sub parse_request{
+	(my $client_sock) = (@_);
+
+
+    #request header
+	my $req_headers = "";
+	while (<$client_sock>) {
+	    $req_headers .= $_;
+        last if $_ eq "\r\n";
+	}
+    my @headers = split("\r\n",$req_headers);
+
+    #method, path
+    (my $method, my $path) = split(' ', $headers[0]);
+    
+    #body parsing
+    $req_headers =~ /Content-Length: (\d+)/;
+    my $content_length = $1;
+    
+    if(!$content_length){
+        return ($method, $path, "");
+    }
+
+    my $body = "";
+    my $aleady_read = 0;
+    while($aleady_read<$content_length){
+        $aleady_read += read($client_sock, my $line, $content_length-$aleady_read);
+        $body .= $line;
+    }
+
+    $body =~ s/</&lt;/g;
+    $body =~ s/>/&gt;/g;
+    $body =~ s/\r//g;
+
+    return ($method, $path, $body);
+
+
+}
+
+while (my $client = $server->accept()) {
+    
+    (my $method, my $path, my $body) = &parse_request($client);
+
+
+    if($path eq "" || $path eq "/"){
+        &index($client);
+        goto end;
+    }
+
+    if($path =~ /^\/\+topic/){
+        &new_topic($client, $body);
+        goto end;
+    }
+
+    if($path =~ /^\/\?(.*)/){
+        &view_topic($client, $1);
+        goto end;
+    }
+
+    if($path =~ /\+reply\+(.*)/){
+        &new_reply($client, $1, $body);
+        goto end;
+    }
+
+
+	end:
+	$client->close();
+    
+
+}
+$server->close();
+
+
