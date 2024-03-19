@@ -1,4 +1,6 @@
 #!/usr/bin/perl
+use strict;
+use warnings;
 
 =aufbau
 
@@ -23,9 +25,9 @@ my $server = IO::Socket::INET->new(
         Listen    => SOMAXCONN,
         Proto     => 'tcp',
         ReuseAddr => 1,
-) or die "Can't create server on port $port: $!\n";
+) or die "Can't create server on port $PORT: $!\n";
 
-print "Server is listening on http://localhost:$port\n";
+print "Server is listening on http://localhost:$PORT\n";
 
 
 my $SUBMIT_NEW_TOPIC = '
@@ -119,7 +121,7 @@ sub new_topic{
     $folder_name = quotemeta($folder_name);
     $folder_name =~ s/\\.//g;
 
-    `mkdir topics/$folder_name`; 
+    my $mkdir_res = `mkdir topics/$folder_name`; 
 
     if($mkdir_res =~ /Illegal byte sequence/){
         &generic_response($client, "illegal topic characters");
@@ -200,7 +202,7 @@ sub view_topic{
 }
 
 sub new_reply{
-    (my $client, $folder_name, my $body) = (@_);
+    (my $client, my $folder_name, my $body) = (@_);
 
     $folder_name = quotemeta($folder_name);
     if(! -e "topics/$folder_name"){
@@ -263,6 +265,8 @@ sub parse_request{
 }
 
 while (my $client = $server->accept()) {
+    
+    $client->timeout(3);
     
     (my $method, my $path, my $body) = &parse_request($client);
 
