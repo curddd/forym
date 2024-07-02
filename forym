@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
+use Data::Dumper;
 
 =aufbau
 
@@ -11,8 +12,7 @@ use warnings;
 =cut
 
 my $LISTENADDR = "0.0.0.0";
-my $PORT = 80;
-
+my $PORT = 8081;
 
 my $mod_time = 0;
 my $TIME_MOD = 1000;
@@ -67,25 +67,29 @@ sub index{
 
 	print "$client index\n";
 
-	my @topics = split('\n',`ls -1r topics`);
+	my @topics = split('\n',`ls -1t topics`);
 
 	my @links = ();
 	foreach(@topics){
-		my @t = split('_', $_);
-		shift(@t);
-		my $t = join(' ', @t);
-		print "topic $t\n";
-
-		push(@links,"<a href='?$_'>$t</a><br>");
+		chomp(my $c = `ls -1 topics/$_ | wc -l`);
+#		my @t = split('_', $_);
+#		shift(@t);
+#		my $t = join(' ', @t);
+		my $t = `cat topics/$_\/\$(ls -1rt topics/$_ | head -n1)`;
+		my @t = split(/\n/,$t);
+		$t = $t[0];
+		push(@links,"<a href='?$_'>$t ($c)</a><br>");
 	}
 
 	print $client "HTTP/1.1 200 OK\r\n\r\n";
 	
 	my $index = "
+	<html>
 	<h1>forym</h1>
 	". join("",@links)."
 	<hr>
 	$SUBMIT_NEW_TOPIC
+	</html>
 	"
 	;
 
@@ -152,6 +156,8 @@ sub view_topic{
 
 
 	print $client "HTTP/1.1 200 OK\r\n\r\n";
+	print $client "<html>";
+
 
 	my @replies = `ls -1 topics/$folder_name`;
 
@@ -195,7 +201,7 @@ sub view_topic{
 	my $reply_part = $SUBMIT_NEW_REPLY;
 	$reply_part =~ s/TOPIC/$folder_name/;
 	print $client $reply_part;
-
+	print $client "</html>";
 
 
 
@@ -223,6 +229,33 @@ sub new_reply{
 	print $client "HTTP/1.1 303 See Other\n";
 	print $client "Location: /?$folder_name\r\n\r\n";
 
+}
+my %words_filtered = ();
+
+sub init_word_filter{
+	open my $w_in, "<", "filter";
+	while(<$w_in>){
+	print $_;
+		$_ =~ /(.+) (.+)/;
+		$words_filtered{$1} = $2;
+	}
+	close $w_in;
+}
+
+sub word_filter{
+	my ($body) = @_;
+	my @arr = split(/ /,$body);
+	my $idx = 0;
+	for my $w (@arr){
+		for my $bw (keys(%words_filtered)){
+			if(lc($w) eq lc($bw)){
+				$arr[$idx] = $words_filtered{$bw};
+			}
+		}
+		$idx++;
+	}
+	$body = join(" ", @arr);
+	return $body;
 }
 
 sub parse_request{
@@ -259,6 +292,9 @@ sub parse_request{
 	$body =~ s/>/&gt;/g;
 	$body =~ s/\r//g;
 
+
+	$body = &word_filter($body);
+
 	return ($method, $path, $body);
 
 
@@ -268,6 +304,8 @@ my %pids = ();
 
 $SIG{CHLD} = 'IGNORE';
 
+
+&init_word_filter();
 while (my $client = $server->accept()){
 	my $pid = fork();
 	if($pid){
