@@ -92,7 +92,7 @@ sub index{
 	</html>
 	"
 	;
-
+	$index = &word_filter($index);
 	print $client $index;
 }
 
@@ -122,8 +122,10 @@ sub new_topic{
 	$folder_name = &get_mod_timestamp() . "_$folder_name";
 	$folder_name =~ s/ /_/g;
 
+	$folder_name = &word_filter($folder_name);
 	$folder_name = quotemeta($folder_name);
 	$folder_name =~ s/\\.//g;
+
 
 	my $mkdir_res = `mkdir topics/$folder_name`; 
 
@@ -132,6 +134,7 @@ sub new_topic{
 	}
 
 	open my $w_out, ">", "topics/$folder_name/".&get_mod_timestamp();
+	$body = &word_filter($body);
 	print $w_out $body;
 	close $w_out;
 
@@ -192,6 +195,7 @@ sub view_topic{
 		print $client "<hr>";
 		while(<$in>){
 			$_ =~ s/\n/\<br\>/g;
+			$_ = &word_filter($_);
 			print $client $_;
 		}
 		close $in;
@@ -222,6 +226,7 @@ sub new_reply{
 
 
 	open my $w_out, ">", "topics/$folder_name/".&get_mod_timestamp();
+	$body = &word_filter($body);
 	print $w_out $body;
 	close $w_out;
 
@@ -248,9 +253,10 @@ sub word_filter{
 	my $idx = 0;
 	for my $w (@arr){
 		for my $bw (keys(%words_filtered)){
-			if(lc($w) eq lc($bw)){
-				$arr[$idx] = $words_filtered{$bw};
-			}
+		#	if(lc($w) eq lc($bw)){
+		#		$arr[$idx] = $words_filtered{$bw};
+		#	}
+		$w =~ s/$bw/$words_filtered{$bw}/gi;
 		}
 		$idx++;
 	}
