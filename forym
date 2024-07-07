@@ -62,31 +62,53 @@ sub get_mod_timestamp{
 	return sprintf("%d%03d",time(),$mod_time);
 }
 
+my $per_page = 35;
 sub index{
-	(my $client) = (@_);
-
-	print "$client index\n";
+	my ($client, $page) = @_;
 
 	my @topics = split('\n',`ls -1t topics`);
 
+
+	my $c_min = $page*$per_page;
+	my $c_end = ($page+1)*$per_page;
+	my $c = 0;	
 	my @links = ();
 	foreach(@topics){
+		if($c<$c_min){
+			$c++;
+			next;
+		}
+		if($c>$c_end){
+			last;
+		}
+		$c++;
 		chomp(my $c = `ls -1 topics/$_ | wc -l`);
-#		my @t = split('_', $_);
-#		shift(@t);
-#		my $t = join(' ', @t);
 		my $t = `cat topics/$_\/\$(ls -1rt topics/$_ | head -n1)`;
 		my @t = split(/\n/,$t);
 		$t = $t[0];
-		push(@links,"<a href='?$_'>$t ($c)</a><br>");
+		push(@links,"<a href='/topic_$_'>$t ($c)</a><br>");
 	}
 
 	print $client "HTTP/1.1 200 OK\r\n\r\n";
+
+	my $page_c = int($per_page / scalar(@topics))+1;
+
+	my $pagination = "<b>pages</b> >> ";
+	for(my $i=0;$i<=$page_c;$i++){
+		if($i==$page){
+			$pagination .= "<a href='/page=$i'>[$i]</a> ";
+			next;
+		}
+		
+		$pagination .= "<a href='/page=$i'>$i</a> ";
+	}
 	
 	my $index = "
 	<html>
 	<h1>forym</h1>
 	". join("",@links)."
+	<hr>
+	$pagination
 	<hr>
 	$SUBMIT_NEW_TOPIC
 	</html>
@@ -232,7 +254,7 @@ sub new_reply{
 
 
 	print $client "HTTP/1.1 303 See Other\n";
-	print $client "Location: /?$folder_name\r\n\r\n";
+	print $client "Location: /topic_$folder_name\r\n\r\n";
 
 }
 my %words_filtered = ();
@@ -323,7 +345,12 @@ while (my $client = $server->accept()){
 
 
 	if($path eq "" || $path eq "/"){
-		&index($client);
+		&index($client,0);
+		goto end;
+	}
+	
+	if($path =~ /^\/page=([0-9]+)/){
+		&index($client, $1);
 		goto end;
 	}
 
@@ -332,7 +359,7 @@ while (my $client = $server->accept()){
 		goto end;
 	}
 
-	if($path =~ /^\/\?(.*)/){
+	if($path =~ /^\/topic\_(.*)/){
 		&view_topic($client, $1);
 		goto end;
 	}
