@@ -64,9 +64,15 @@ sub get_mod_timestamp{
 
 my $per_page = 35;
 sub index{
-	my ($client, $page) = @_;
+	my ($client, $page, $search) = @_;
 
-	my @topics = split('\n',`ls -1t topics`);
+	my @topics;
+	if(defined $search){
+		@topics = split('\n',`ls -1t topics | grep $search`);
+	}
+	else{
+		@topics = split('\n',`ls -1t topics`);
+	}
 
 
 	my $c_min = $page*$per_page;
@@ -91,21 +97,33 @@ sub index{
 
 	print $client "HTTP/1.1 200 OK\r\n\r\n";
 
-	my $page_c = int($per_page / scalar(@topics))+1;
+	my $page_c = int(scalar(@topics)/$per_page);
 
 	my $pagination = "<b>pages</b> >> ";
 	for(my $i=0;$i<=$page_c;$i++){
 		if($i==$page){
-			$pagination .= "<a href='/page=$i'>[$i]</a> ";
+			if(defined $search){
+				$pagination .= "<a href='/page=$i&search=$search'>[$i]</a> ";
+			}
+			else{
+				$pagination .= "<a href='/page=$i'>[$i]</a> ";
+			}
 			next;
 		}
-		
-		$pagination .= "<a href='/page=$i'>$i</a> ";
+		if(defined $search){
+	
+			$pagination .= "<a href='/page=$i&search=$search'>$i</a> ";
+		}
+		else{
+			$pagination .= "<a href='/page=$i'>$i</a> ";
+		}
 	}
 	
 	my $index = "
 	<html>
 	<h1>forym</h1>
+	<head><meta charset='UTF-8'> <style>body{font-family:monospace;}</style></head>
+	<form method='GET' action='/'><input type='text' placeholder='search' name='search'></form>
 	". join("",@links)."
 	<hr>
 	$pagination
@@ -114,7 +132,6 @@ sub index{
 	</html>
 	"
 	;
-	$index = &word_filter($index);
 	print $client $index;
 }
 
@@ -157,12 +174,13 @@ sub new_topic{
 
 	open my $w_out, ">", "topics/$folder_name/".&get_mod_timestamp();
 	$body = &word_filter($body);
+	$body =~ s/ /&nbsp;/g;
 	print $w_out $body;
 	close $w_out;
 
 
 	print $client "HTTP/1.1 303 See Other\n";
-	print $client "Location: /?$folder_name\r\n\r\n";
+	print $client "Location: /topic_$folder_name\r\n\r\n";
 
 }
 
@@ -170,8 +188,6 @@ sub view_topic{
 	(my $client, my $folder_name) = (@_);
 
 	$folder_name = quotemeta($folder_name);
-
-	printf("view_topic, folder name, $folder_name\n");
 
 
 	if(! -e "topics/$folder_name"){
@@ -183,6 +199,7 @@ sub view_topic{
 	print $client "HTTP/1.1 200 OK\r\n\r\n";
 	print $client "<html>";
 
+	print $client "<head><meta charset='UTF-8'><style>body{font-family:monospace;}</style></head>";
 
 	my @replies = `ls -1 topics/$folder_name`;
 
@@ -204,7 +221,6 @@ sub view_topic{
 		$_ =~ s/\n/\<br\>/g;
 		print $client $_;
 
-		print $_;
 	}
 	close $in;
 
@@ -249,6 +265,8 @@ sub new_reply{
 
 	open my $w_out, ">", "topics/$folder_name/".&get_mod_timestamp();
 	$body = &word_filter($body);
+	$body =~ s/ /&nbsp;/g;
+
 	print $w_out $body;
 	close $w_out;
 
@@ -328,6 +346,18 @@ sub parse_request{
 
 }
 
+sub glueckslotterie(){
+	if(rand(1)>0.01){
+		return;
+	}	
+
+	my @topics = split('\n',`ls -1t topics`);
+	my $death = pop(@topics);
+	`rm -rf topics/$death`;
+	print "boom";
+}
+	
+
 my %pids = ();
 
 $SIG{CHLD} = 'IGNORE';
@@ -349,10 +379,19 @@ while (my $client = $server->accept()){
 		goto end;
 	}
 	
-	if($path =~ /^\/page=([0-9]+)/){
+	if($path =~ /^\/page=([0-9]+)$/){
 		&index($client, $1);
 		goto end;
 	}
+	if($path =~ /^\/page=([0-9]+)&search=(.+)/){
+		&index($client,$1,quotemeta($2));
+		goto end;
+	}
+	if($path =~ /search=(.+)/){
+		&index($client,0,quotemeta($1));
+		goto end;
+	}
+
 
 	if($path =~ /^\/\+topic/){
 		&new_topic($client, $body);
@@ -371,6 +410,8 @@ while (my $client = $server->accept()){
 
 
 	end:
+
+	&glueckslotterie();
 	$client->close();
 
 	exit 0;	
