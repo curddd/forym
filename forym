@@ -3,6 +3,7 @@ use strict;
 use warnings;
 use Data::Dumper;
 
+use List::Util qw(max);
 =aufbau
 
 +topic
@@ -122,7 +123,7 @@ sub index{
 	my $index = "
 	<html>
 	<h1>forym</h1>
-	<head><meta charset='UTF-8'> <style>body{font-family:monospace;}</style></head>
+	<head><meta charset='UTF-8'> <style>body{font-family:monospace;font-size:23px;}</style><head>
 	<form method='GET' action='/'><input type='text' placeholder='search' name='search'></form>
 	". join("",@links)."
 	<hr>
@@ -199,7 +200,7 @@ sub view_topic{
 	print $client "HTTP/1.1 200 OK\r\n\r\n";
 	print $client "<html>";
 
-	print $client "<head><meta charset='UTF-8'><style>body{font-family:monospace;}</style></head>";
+	print $client "<head><meta charset='UTF-8'><style>body{font-family:monospace;word-wrap:break-word;}</style></head>";
 
 	my @replies = `ls -1 topics/$folder_name`;
 
@@ -224,7 +225,6 @@ sub view_topic{
 	}
 	close $in;
 
-
 	foreach my $reply (@replies){
 		$reply =~ s/\n//g;
 
@@ -236,6 +236,9 @@ sub view_topic{
 			$_ = &word_filter($_);
 			print $client $_;
 		}
+		print $client "</div>";
+
+
 		close $in;
 	}   
 
@@ -261,7 +264,7 @@ sub new_reply{
 	if(length($body)==1){
 		&generic_response($client, "empty reply");
 	}
-
+	
 
 	open my $w_out, ">", "topics/$folder_name/".&get_mod_timestamp();
 	$body = &word_filter($body);
@@ -316,8 +319,15 @@ sub parse_request{
 	}
 	my @headers = split("\r\n",$req_headers);
 
+	if(!$headers[0]){
+		return ("NIX","NIX","NIX");
+	}
+	
 	#method, path
 	(my $method, my $path) = split(' ', $headers[0]);
+	if(!$path){
+		$path = "/";
+	}
 	
 	#body parsing
 	$req_headers =~ /Content-Length: (\d+)/;
