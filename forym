@@ -35,6 +35,7 @@ my $SUBMIT_NEW_TOPIC = '
 	<h3>new topic</h3>
 	<form action="/+topic" method="POST" enctype="text/plain">
 		<textarea rows="14" cols="80" name="topic"></textarea><br>
+		CA_PTC_HA334534
 		<button type="submit">submit new topic</button>
 	</form>
 ';
@@ -63,12 +64,24 @@ sub get_mod_timestamp{
 	return sprintf("%d%03d",time(),$mod_time);
 }
 
+
+
+my %captchas = ();
+sub generate_captcha{
+	my $captcha = int(rand(0xffff));
+	my $hidden = int(rand(0xffff));
+	$captchas{$hidden} = $captcha;
+	my $png = `magick -size 150x40 xc:"white" -pointsize 36 -gravity center -fill "black" -annotate +0+0 "$captcha" -wave 3x3 png:- | base64`;
+	$png = "<img src='data:image/png;base64, $png'><br><input name='$hidden'><br>";
+	return $png;
+}
+
 my $per_page = 35;
 sub index{
-	my ($client, $page, $search) = @_;
+	my ($client, $page, $search, $captcha) = @_;
 
 	my @topics;
-	if(defined $search){
+	if(defined $search && $search ne ''){
 		@topics = split('\n',`ls -1t topics | grep $search`);
 	}
 	else{
@@ -133,6 +146,7 @@ sub index{
 	</html>
 	"
 	;
+	$index =~ s/CA_PTC_HA334534/$captcha/;
 	print $client $index;
 }
 
@@ -142,10 +156,20 @@ sub new_topic{
 
 	$body =~ s/^topic=//g;
 
-	my @body = split('\n', $body);
+	my @lines = split('\n',$body);
 
-	my $topic = shift(@body);
-	my $topic_body = join('\n',@body);
+
+
+	my @captcha = split('=',$lines[scalar(@lines)-1]);
+	if(!$captcha[1] || !$captchas{$captcha[0]} || $captchas{$captcha[0]} != int($captcha[1])){
+		&generic_response($client, "invalid captcha");
+	}
+	delete $captchas{$captcha[0]};
+	pop(@lines);
+
+
+	my $topic = $lines[0];
+	my $topic_body = join('\n',@lines);
 
 	if(length($topic)==0){
 		&generic_response($client, "no title");
@@ -154,7 +178,6 @@ sub new_topic{
 	if(length($topic_body)==0){
 		&generic_response($client, "please provide topic body");
 	}
-
 
 	my $folder_name = $topic;
 	$folder_name =~ s/\_//g;
@@ -174,6 +197,7 @@ sub new_topic{
 	}
 
 	open my $w_out, ">", "topics/$folder_name/".&get_mod_timestamp();
+	$body = join("\n",@lines);
 	$body = &word_filter($body);
 	$body =~ s/ /&nbsp;/g;
 	print $w_out $body;
@@ -310,7 +334,6 @@ sub word_filter{
 sub parse_request{
 	(my $client_sock) = (@_);
 
-
 	#request header
 	my $req_headers = "";
 	while (<$client_sock>) {
@@ -318,7 +341,13 @@ sub parse_request{
 		last if $_ eq "\r\n";
 	}
 	my @headers = split("\r\n",$req_headers);
-
+	my %headers;
+	for my $h (@headers){
+		$h =~  /^(.+):\s(.+)$/;
+		if($1 && $2){
+			$headers{$1} = $2;
+		}
+	}
 	if(!$headers[0]){
 		return ("NIX","NIX","NIX");
 	}
@@ -328,10 +357,10 @@ sub parse_request{
 	if(!$path){
 		$path = "/";
 	}
-	
+
 	#body parsing
-	$req_headers =~ /Content-Length: (\d+)/;
-	my $content_length = $1;
+	#$req_headers =~ /Content-Length: (\d+)/;
+	my $content_length = $headers{'Content-Length'};
 	
 	if(!$content_length){
 		return ($method, $path, "");
@@ -357,6 +386,7 @@ sub parse_request{
 }
 
 sub glueckslotterie(){
+	return;
 	if(rand(1)>0.01){
 		return;
 	}	
@@ -366,39 +396,43 @@ sub glueckslotterie(){
 	`rm -rf topics/$death`;
 	print "boom";
 }
-	
 
-my %pids = ();
 
 $SIG{CHLD} = 'IGNORE';
 
-
 &init_word_filter();
-while (my $client = $server->accept()){
+
+while(my $client = $server->accept()){
+	
+	
+	my $captcha = &generate_captcha();
+	
+
+
+
 	my $pid = fork();
 	if($pid){
-		$pids{$pid} = 1;
 		next;
 	}   
  
 	(my $method, my $path, my $body) = &parse_request($client);
-
+	
 
 	if($path eq "" || $path eq "/"){
-		&index($client,0);
+		&index($client,0,'',$captcha);
 		goto end;
 	}
 	
 	if($path =~ /^\/page=([0-9]+)$/){
-		&index($client, $1);
+		&index($client, $1, '', $captcha);
 		goto end;
 	}
 	if($path =~ /^\/page=([0-9]+)&search=(.+)/){
-		&index($client,$1,quotemeta($2));
+		&index($client,$1,quotemeta($2),$captcha);
 		goto end;
 	}
 	if($path =~ /search=(.+)/){
-		&index($client,0,quotemeta($1));
+		&index($client,0,quotemeta($1),$captcha);
 		goto end;
 	}
 
