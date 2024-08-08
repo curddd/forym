@@ -15,6 +15,9 @@ use List::Util qw(max);
 my $LISTENADDR = "0.0.0.0";
 my $PORT = 8081;
 
+
+my %visitor_ips;
+
 my $mod_time = 0;
 my $TIME_MOD = 1000;
 
@@ -46,6 +49,10 @@ my $SUBMIT_NEW_REPLY = '
 		<textarea rows="14" cols="80" name="reply"></textarea><br>
 		<button type="submit">submit new reply</button>
 	</form>
+	<hr>
+	<form action="delete+TOPIC" method="POST" enctype="text/plain">
+	<input placeholder="admin pass" name="pass">
+	</form>
 ';
 
 
@@ -71,7 +78,7 @@ sub generate_captcha{
 	my $captcha = int(rand(0xffff));
 	my $hidden = int(rand(0xffff));
 	$captchas{$hidden} = $captcha;
-	my $png = `magick -size 150x40 xc:"white" -pointsize 36 -gravity center -fill "black" -annotate +0+0 "$captcha" -wave 3x3 png:- | base64`;
+	my $png = `convert -size 150x40 xc:"white" -pointsize 36 -gravity center -fill "black" -annotate +0+0 "$captcha" -wave 3x3 png:- | base64`;
 	$png = "<img src='data:image/png;base64, $png'><br><input name='$hidden'><br>";
 	return $png;
 }
@@ -135,7 +142,8 @@ sub index{
 	
 	my $index = "
 	<html>
-	<h1>forym</h1>
+	<h1>forym </h1>
+	<h3>hebrew_allies_with_nazi_germany</h3>
 	<head><meta charset='UTF-8'> <style>body{font-family:monospace;font-size:23px;}</style><head>
 	<form method='GET' action='/'><input type='text' placeholder='search' name='search'></form>
 	". join("",@links)."
@@ -147,6 +155,8 @@ sub index{
 	"
 	;
 	$index =~ s/CA_PTC_HA334534/$captcha/;
+	my $visitors = scalar(keys %visitor_ips)." online";
+	$index =~ s/hebrew_allies_with_nazi_germany/$visitors/;
 	print $client $index;
 }
 
@@ -268,7 +278,7 @@ sub view_topic{
 
 	print $client "<hr>";
 	my $reply_part = $SUBMIT_NEW_REPLY;
-	$reply_part =~ s/TOPIC/$folder_name/;
+	$reply_part =~ s/TOPIC/$folder_name/g;
 	print $client $reply_part;
 	print $client "</html>";
 
@@ -397,6 +407,30 @@ sub glueckslotterie(){
 	print "boom";
 }
 
+my $admin_pass = "pgsldfsdljkg32425234535433640678345klengfdkfjgregensegen";
+sub delete_thread{
+	(my $client, my $body, my $topic) = @_;
+	$body =~ s/pass=//;
+	$body =~ s/\n//;
+	if($body ne $admin_pass){
+		return;
+	}
+	`rm -rf topics/$topic`;
+	&generic_response($client, "oke");
+}
+
+
+my $UNIQUE_TIMEOUT = 60*15;
+sub ip_housekeep{
+
+	for my $client (keys(%visitor_ips)){
+
+		if(time()-$visitor_ips{$client} > $UNIQUE_TIMEOUT){
+			delete $visitor_ips{$client};
+		}
+	}
+}
+
 
 $SIG{CHLD} = 'IGNORE';
 
@@ -406,12 +440,12 @@ while(my $client = $server->accept()){
 	
 	
 	my $captcha = &generate_captcha();
-	
-
+	$visitor_ips{$client->peerhost()} = time();
 
 
 	my $pid = fork();
 	if($pid){
+		&ip_housekeep();
 		next;
 	}   
  
@@ -419,12 +453,12 @@ while(my $client = $server->accept()){
 	
 
 	if($path eq "" || $path eq "/"){
-		&index($client,0,'',$captcha);
+		&index($client,0,undef,$captcha);
 		goto end;
 	}
 	
 	if($path =~ /^\/page=([0-9]+)$/){
-		&index($client, $1, '', $captcha);
+		&index($client, $1, undef, $captcha);
 		goto end;
 	}
 	if($path =~ /^\/page=([0-9]+)&search=(.+)/){
@@ -452,6 +486,14 @@ while(my $client = $server->accept()){
 		goto end;
 	}
 
+	if($path =~ /delete\+(.*)$/){
+		&delete_thread($client, $body, $1);
+	}
+	
+	if($path eq "/archive.tar"){
+		my $archive = `tar cz topics`;
+		&generic_response($client,$archive);
+	}
 
 	end:
 
